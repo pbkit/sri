@@ -1,79 +1,89 @@
 export type IntegrityMetadata = HashWithOptions[];
 
 export interface HashWithOptions {
-  algorithm: string; // "sha256" | "sha384" | "sha512"
-  digest: string; // base64
+  algorithm: string;
+  digest: Uint8Array;
   options: string[];
 }
 
-export function parse(sri: string): IntegrityMetadata {
+export interface EncodingFns {
+  encodeBase64: EncodeBase64Fn;
+  decodeBase64: DecodeBase64Fn;
+}
+
+export interface EncodeBase64Fn {
+  (data: Uint8Array): string;
+}
+
+export interface DecodeBase64Fn {
+  (data: string): Uint8Array;
+}
+
+export interface HashFns {
+  sha1?: HashFn;
+  sha256?: HashFn;
+  sha384?: HashFn;
+  sha512?: HashFn;
+}
+
+export interface HashFn {
+  (data: Uint8Array): Uint8Array;
+}
+
+export function parse(
+  sri: string,
+  decodeBase64: DecodeBase64Fn
+): IntegrityMetadata {
   return sri.split(/\s+/).map((hashWithOptions) => {
     const [hash, ...options] = hashWithOptions.split("?");
     const [algorithm, b64] = hash.split("-");
-    const digest = new TextDecoder().decode(decodeBase64(b64 ?? ""));
+    const digest = decodeBase64(b64 ?? "");
     return { algorithm, digest, options };
   });
 }
 
-export function stringify(integrity: IntegrityMetadata): string {
-  return integrity.map(({ algorithm, digest, options }) => {
-    const opts = options.map((o) => "?" + o).join("");
-    return `${algorithm}-${encodeBase64(digest)}${opts}`;
-  }).join(" ");
+export function stringify(
+  integrity: IntegrityMetadata,
+  encodeBase64: EncodeBase64Fn
+): string {
+  return integrity
+    .map(({ algorithm, digest, options }) => {
+      const opts = options.map((o) => "?" + o).join("");
+      return `${algorithm}-${encodeBase64(digest)}${opts}`;
+    })
+    .join(" ");
 }
 
-export async function check(
-  subtle: SubtleCrypto,
+export function check(
+  hashFns: HashFns,
   integrity: IntegrityMetadata,
-  data: Uint8Array,
-): Promise<HashWithOptions | undefined> {
-  // TODO
+  data: Uint8Array
+): HashWithOptions | undefined {
+  const hash = pickBest(hashFns, integrity);
+  if (!hash) throw new Error("There is no suitable hash function.");
+  const hashFn = hashFns[hash.algorithm as keyof HashFns]!;
+  if (eq(hashFn(data), hash.digest)) return hash;
+}
+
+export function pickBest(
+  hashFns: HashFns,
+  integrity: IntegrityMetadata
+): HashWithOptions | undefined {
+  const table: { [algorithm in keyof HashFns]: HashWithOptions } = {};
+  const availableAlgorithms = priorityTable
+    .slice()
+    .filter((algorithm) => !!hashFns[algorithm]);
+  for (const hash of integrity) table[hash.algorithm as keyof HashFns] = hash;
+  for (const algorithm of availableAlgorithms) {
+    if (table[algorithm]) return table[algorithm];
+  }
   return;
 }
 
-export async function digest(
-  subtle: SubtleCrypto,
-  data: Uint8Array,
-  algorithm: string = "sha512",
-): Promise<string> {
-  // TODO
-  return "";
-}
+const priorityTable: (keyof HashFns)[] = ["sha512", "sha384", "sha256", "sha1"];
 
-// code from https://github.com/denoland/deno_std/blob/main/encoding/base64.ts
-const base64abc =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-function encodeBase64(data: ArrayBuffer | string): string {
-  const uint8 = typeof data === "string"
-    ? new TextEncoder().encode(data)
-    : data instanceof Uint8Array
-    ? data
-    : new Uint8Array(data);
-  let result = "", i;
-  const l = uint8.length;
-  for (i = 2; i < l; i += 3) {
-    result += base64abc[uint8[i - 2] >> 2];
-    result += base64abc[((uint8[i - 2] & 0x03) << 4) | (uint8[i - 1] >> 4)];
-    result += base64abc[((uint8[i - 1] & 0x0f) << 2) | (uint8[i] >> 6)];
-    result += base64abc[uint8[i] & 0x3f];
-  }
-  if (i === l + 1) {
-    result += base64abc[uint8[i - 2] >> 2];
-    result += base64abc[(uint8[i - 2] & 0x03) << 4];
-    result += "==";
-  }
-  if (i === l) {
-    result += base64abc[uint8[i - 2] >> 2];
-    result += base64abc[((uint8[i - 2] & 0x03) << 4) | (uint8[i - 1] >> 4)];
-    result += base64abc[(uint8[i - 1] & 0x0f) << 2];
-    result += "=";
-  }
-  return result;
-}
-function decodeBase64(b64: string): Uint8Array {
-  const binString = atob(b64);
-  const size = binString.length;
-  const bytes = new Uint8Array(size);
-  for (let i = 0; i < size; i++) bytes[i] = binString.charCodeAt(i);
-  return bytes;
+function eq(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; ++i) if (a[i] !== b[i]) return false;
+  return true;
 }
