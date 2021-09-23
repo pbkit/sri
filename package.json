@@ -1,8 +1,10 @@
 {
   "name": "@pbkit/sri",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Subresource Integrity",
   "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "license": "(MIT OR Apache-2.0)",
   "author": "JongChan Choi <jong@chan.moe>",
   "packageManager": "yarn@3.0.2",
